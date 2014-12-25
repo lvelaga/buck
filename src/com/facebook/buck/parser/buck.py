@@ -282,15 +282,20 @@ class BuildFileProcessor(object):
 
         # Look up the caller's stack frame and merge the include's globals
         # into it's symbol table.
-        frame = inspect.currentframe()
-        while frame.f_globals['__name__'] == __name__:
-            frame = frame.f_back
+        frame = self._get_caller()
         self._merge_globals(mod.__dict__, frame.f_globals)
 
         # Pull in the include's accounting of its own referenced includes
         # into the current build context.
         build_env.includes.add(path)
         build_env.includes.update(inner_env.includes)
+
+    def _get_caller(self):
+        frame = inspect.currentframe()
+        while frame.f_globals['__name__'] == __name__:
+            frame = frame.f_back
+        return frame
+
 
     def _push_build_env(self, build_env):
         """
@@ -331,6 +336,8 @@ class BuildFileProcessor(object):
         default_globals['include_defs'] = functools.partial(
             self._include_defs,
             implicit_includes=implicit_includes)
+        default_globals['subinclude'] = functools.partial(
+            self._sub_include)
 
         # If any implicit includes were specified, process them first.
         for include in implicit_includes:
@@ -342,6 +349,15 @@ class BuildFileProcessor(object):
 
         # Build a new module for the given file, using the default globals
         # created above.
+        module = self._process_only(path, default_globals)
+
+        # Restore the previous build context.
+        self._pop_build_env()
+
+        self._cache[path] = build_env, module
+        return build_env, module
+
+    def _process_only(self, path, default_globals):
         module = imp.new_module(path)
         module.__file__ = path
         module.__dict__.update(default_globals)
@@ -355,12 +371,31 @@ class BuildFileProcessor(object):
         future_features = __future__.absolute_import.compiler_flag
         code = compile(contents, path, 'exec', future_features, 1)
         exec(code, module.__dict__)
+        return module
 
-        # Restore the previous build context.
-        self._pop_build_env()
+    def getBuildFileFrame(self):
+        frame = inspect.currentframe()
+        while not frame.f_globals['__name__'].endswith('BUCK'):
+            frame = frame.f_back
+        return frame
 
-        self._cache[path] = build_env, module
-        return build_env, module
+    def _sub_include(self, name):
+        # Evaluate in the context of the build file.
+        callerframe = self.getBuildFileFrame()
+        mod = self._process_only(self._get_include_path(name), callerframe.f_globals)
+        self._merge_globals(mod.__dict__, callerframe.f_globals)
+        #self.debugPrintFrames()
+
+    def debugPrintFrames(self):
+        out = ''
+        frame = inspect.currentframe()
+        for i in xrange(0, 5):
+            out = out + str(frame.f_code) \
+                  + '\n#############\n' + str(frame.f_globals['__name__']) \
+                  + '\n#############\n' + str(frame.f_globals)
+            frame = frame.f_back
+            out = out + '\n\n\n\n\n\n\n\n\n\n'
+        raise Exception(out)
 
     def _process_include(self, path, implicit_includes=[]):
         """
