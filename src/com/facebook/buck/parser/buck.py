@@ -35,6 +35,7 @@ class BuildContextType(object):
 
     BUILD_FILE = 'build_file'
     INCLUDE = 'include'
+    IGNORE_BUCK_RULES = 'ignore_buck_rules'
 
 
 class BuildFileContext(object):
@@ -64,6 +65,15 @@ class IncludeContext(object):
         self.globals = {}
         self.includes = set()
 
+class IgnoreBuckRulesContext(object):
+    """
+    The build context used when processing eval_ignore_buck_rules()
+    """
+    type = BuildContextType.IGNORE_BUCK_RULES
+
+    def __init__(self):
+        self.globals = {}
+        self.includes = set()
 
 class LazyBuildEnvPartial(object):
     """Pairs a function with a build environment in which it will be executed.
@@ -94,6 +104,9 @@ def provide_for_build(func):
 
 
 def add_rule(rule, build_env):
+    if build_env.type == BuildContextType.IGNORE_BUCK_RULES:
+        return
+
     assert build_env.type == BuildContextType.BUILD_FILE, (
         "Cannot use `{}()` at the top-level of an included file."
         .format(rule['type']))
@@ -110,10 +123,16 @@ def add_rule(rule, build_env):
     rule['buck.base_path'] = build_env.base_path
     build_env.rules[rule_name] = rule
 
+@provide_for_build
+def is_build_file_context(build_env = None):
+    return build_env.type == BuildContextType.BUILD_FILE
 
 @provide_for_build
 def glob(includes, excludes=[], include_dotfiles=False, build_env=None):
-    assert build_env.type == BuildContextType.BUILD_FILE, (
+    if build_env.type == BuildContextType.IGNORE_BUCK_RULES:
+        return []
+
+    assert build_env.type in [BuildContextType.BUILD_FILE], (
         "Cannot use `glob()` at the top-level of an included file.")
 
     search_base = Path(build_env.dirname)
@@ -180,13 +199,16 @@ def get_base_path(build_env=None):
              trailing slash. The return value will be "" if called from
              the build file in the root of the project.
     """
-    assert build_env.type == BuildContextType.BUILD_FILE, (
+    assert build_env.type in [BuildContextType.BUILD_FILE, BuildContextType.IGNORE_BUCK_RULES], (
         "Cannot use `get_base_path()` at the top-level of an included file.")
     return build_env.base_path
 
 
 @provide_for_build
 def add_deps(name, deps=[], build_env=None):
+    if build_env.type == BuildContextType.IGNORE_BUCK_RULES:
+        return
+
     assert build_env.type == BuildContextType.BUILD_FILE, (
         "Cannot use `add_deps()` at the top-level of an included file.")
 
@@ -338,6 +360,8 @@ class BuildFileProcessor(object):
             implicit_includes=implicit_includes)
         default_globals['subinclude'] = functools.partial(
             self._sub_include)
+        default_globals['eval_ignore_buck_rules'] = functools.partial(
+            self._eval_ignore_buck_rules)
 
         # If any implicit includes were specified, process them first.
         for include in implicit_includes:
@@ -385,6 +409,16 @@ class BuildFileProcessor(object):
         mod = self._process_only(self._get_include_path(name), callerframe.f_globals)
         self._merge_globals(mod.__dict__, callerframe.f_globals)
         #self.debugPrintFrames()
+
+    def _eval_ignore_buck_rules(self, name):
+        callerframe = self.getBuildFileFrame()
+
+        self._push_build_env(IgnoreBuckRulesContext())
+        try:
+            mod = self._process_only(self._get_include_path(name), callerframe.f_globals)
+            self._merge_globals(mod.__dict__, callerframe.f_globals)
+        finally:
+            self._pop_build_env()
 
     def debugPrintFrames(self):
         out = ''
