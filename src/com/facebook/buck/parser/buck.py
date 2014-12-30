@@ -284,7 +284,7 @@ class BuildFileProcessor(object):
         relative_path = name[2:]
         return os.path.join(self._project_root, name[2:])
 
-    def _include_defs(self, name, implicit_includes=[]):
+    def _include_defs(self, name, implicit_includes=[], sub_include = False, ignore_buck_rules = False):
         """
         Pull the named include into the current caller's context.
 
@@ -292,10 +292,20 @@ class BuildFileProcessor(object):
         includes that we process.
         """
 
+        if sub_include:
+            self._sub_include(name)
+            return
+
+        if ignore_buck_rules:
+            self._eval_ignore_buck_rules(name)
+            return
+
+
         # Grab the current build context from the top of the stack.
         build_env = self._build_env_stack[-1]
 
         # Resolve the named include to its path and process it to get its
+
         # build context and module.
         path = self._get_include_path(name)
         inner_env, mod = self._process_include(
