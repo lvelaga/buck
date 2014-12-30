@@ -414,18 +414,27 @@ class BuildFileProcessor(object):
         return frame
 
     def _sub_include(self, name):
+        include_path = self._get_include_path(name)
+        build_env = self._build_env_stack[-1]
+        build_env.includes.add(include_path)
+
         # Evaluate in the context of the build file.
         callerframe = self.getBuildFileFrame()
-        mod = self._process_only(self._get_include_path(name), callerframe.f_globals)
+        mod = self._process_only(include_path, callerframe.f_globals)
         self._merge_globals(mod.__dict__, callerframe.f_globals)
+
         #self.debugPrintFrames()
 
     def _eval_ignore_buck_rules(self, name):
+        include_path = self._get_include_path(name)
+        build_env = self._build_env_stack[-1]
+        build_env.includes.add(include_path)
+
         callerframe = self.getBuildFileFrame()
 
         self._push_build_env(IgnoreBuckRulesContext())
         try:
-            mod = self._process_only(self._get_include_path(name), callerframe.f_globals)
+            mod = self._process_only(include_path, callerframe.f_globals)
             self._merge_globals(mod.__dict__, callerframe.f_globals)
         finally:
             self._pop_build_env()
